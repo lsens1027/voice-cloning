@@ -36,8 +36,13 @@ function aliyunRealtimeTts({apiKey,model,voice,text,endpoint}){
   return new Promise((resolve,reject)=>{
     const modelId=model||aliyunModel;
     if(!/^qwen[0-9a-z.-]+$/i.test(modelId))return reject(new Error('模型 ID 格式无效，请填写百炼支持的 Qwen TTS Realtime 模型 ID'));
-    let host='dashscope.aliyuncs.com';
-    try{const u=new URL(endpoint||'https://dashscope.aliyuncs.com/api/v1');if(u.hostname==='dashscope-intl.aliyuncs.com')host='dashscope-intl.aliyuncs.com'}catch{}
+    let host;
+    try{
+      const u=new URL(endpoint||'https://dashscope.aliyuncs.com/api/v1');host=u.hostname;
+      const publicHost=['dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com'].includes(host);
+      const workspaceHost=/^[a-z0-9-]+\.(cn-beijing|ap-southeast-1)\.maas\.aliyuncs\.com$/i.test(host);
+      if(!publicHost&&!workspaceHost)return reject(new Error('阿里云 Endpoint 必须是 DashScope 或北京/新加坡 Workspace 专属 API Host'));
+    }catch{return reject(new Error('阿里云 Endpoint 格式无效'))}
     const ws=new WebSocket(`wss://${host}/api-ws/v1/realtime?model=${encodeURIComponent(modelId)}`,{headers:{Authorization:`Bearer ${apiKey}`}});
     const chunks=[];let settled=false;
     const timer=setTimeout(()=>finish(new Error('阿里云语音合成超时，请稍后重试')),90000);
