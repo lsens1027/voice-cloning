@@ -2,14 +2,12 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
-import WebSocket from 'ws';
 
 const root=fileURLToPath(new URL('.',import.meta.url));
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/manifest+json; charset=utf-8','.svg':'image/svg+xml'};
 const miloraEndpoint='https://api.milorapart.top/apis/mbAIsc';
 const allowedAudioHosts=new Set(['media.milorapart.top','api.milorapart.top']);
-const aliyunModel='qwen3-tts-vc-realtime-2025-11-27';
+const aliyunHttpModel='qwen3-tts-vc-2026-01-22';
 
 async function proxyMilora(url,res){
   const text=url.searchParams.get('text')?.trim();
@@ -24,63 +22,59 @@ async function proxyMilora(url,res){
   res.writeHead(200,{'Content-Type':'audio/mpeg','Content-Length':String(buffer.length),'Content-Disposition':`attachment; filename="voiceprint-${Date.now()}.mp3"`,'Cache-Control':'no-store'});res.end(buffer);
 }
 
-function wavFromPcm(pcm,sampleRate=24000){
-  const header=Buffer.alloc(44);
-  header.write('RIFF',0);header.writeUInt32LE(36+pcm.length,4);header.write('WAVE',8);header.write('fmt ',12);
-  header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(sampleRate,24);
-  header.writeUInt32LE(sampleRate*2,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(pcm.length,40);
-  return Buffer.concat([header,pcm]);
+function aliyunBase(endpoint){
+  let u;try{u=new URL(endpoint||'https://dashscope.aliyuncs.com/api/v1')}catch{throw new Error('阿里云 Endpoint 格式无效')}
+  if(u.protocol!=='https:'||u.username||u.password||u.search||u.hash)throw new Error('阿里云 Endpoint 必须是 HTTPS API Host');
+  const host=u.hostname.toLowerCase();
+  const publicHost=['dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com'].includes(host);
+  const workspaceHost=/^[a-z0-9-]+\.(cn-beijing|ap-southeast-1)\.maas\.aliyuncs\.com$/i.test(host);
+  if(!publicHost&&!workspaceHost)throw new Error('阿里云 Endpoint 必须是 DashScope 或北京/新加坡 Workspace 专属 API Host');
+  if(!['/','/api/v1','/api/v1/'].includes(u.pathname))throw new Error('阿里云 Endpoint 路径请使用根域名或 /api/v1');
+  return `${u.origin}/api/v1`;
 }
 
-function aliyunRealtimeTts({apiKey,model,voice,text,endpoint}){
-  return new Promise((resolve,reject)=>{
-    const modelId=model||aliyunModel;
-    if(!/^qwen[0-9a-z.-]+$/i.test(modelId))return reject(new Error('模型 ID 格式无效，请填写百炼支持的 Qwen TTS Realtime 模型 ID'));
-    let host;
-    try{
-      const u=new URL(endpoint||'https://dashscope.aliyuncs.com/api/v1');host=u.hostname;
-      const publicHost=['dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com'].includes(host);
-      const workspaceHost=/^[a-z0-9-]+\.(cn-beijing|ap-southeast-1)\.maas\.aliyuncs\.com$/i.test(host);
-      if(!publicHost&&!workspaceHost)return reject(new Error('阿里云 Endpoint 必须是 DashScope 或北京/新加坡 Workspace 专属 API Host'));
-    }catch{return reject(new Error('阿里云 Endpoint 格式无效'))}
-    const ws=new WebSocket(`wss://${host}/api-ws/v1/realtime?model=${encodeURIComponent(modelId)}`,{headers:{Authorization:`Bearer ${apiKey}`}});
-    const chunks=[];let settled=false;
-    const timer=setTimeout(()=>finish(new Error('阿里云语音合成超时，请稍后重试')),90000);
-    function finish(error,result){if(settled)return;settled=true;clearTimeout(timer);try{ws.close()}catch{};error?reject(error):resolve(result)}
-    function sendEvent(event){ws.send(JSON.stringify({...event,event_id:`event_${randomUUID()}`}))}
-    ws.on('message',raw=>{
-      let event;try{event=JSON.parse(raw.toString())}catch{return}
-      if(event.type==='error')return finish(new Error(`阿里云实时合成错误：${event.error?.message||event.error?.code||'未知错误'}`));
-      if(event.type==='session.created')sendEvent({type:'session.update',session:{mode:'commit',voice,response_format:'pcm',sample_rate:24000,language_type:'Chinese'}});
-      else if(event.type==='session.updated'){
-        sendEvent({type:'input_text_buffer.append',text});
-        sendEvent({type:'input_text_buffer.commit'});
-      }else if(event.type==='response.audio.delta'&&event.delta)chunks.push(Buffer.from(event.delta,'base64'));
-      else if(event.type==='response.done'){
-        if(event.response?.status&&event.response.status!=='completed')return finish(new Error(`阿里云语音合成状态：${event.response.status}`));
-        if(!chunks.length)return finish(new Error('阿里云合成成功但未返回音频'));
-        sendEvent({type:'session.finish'});
-      }else if(event.type==='session.finished')finish(null,wavFromPcm(Buffer.concat(chunks)));
-    });
-    ws.on('unexpected-response',(_req,res)=>{let body='';res.on('data',c=>body+=c);res.on('end',()=>finish(new Error(`阿里云 WebSocket 握手失败（HTTP ${res.statusCode}）：${body.slice(0,500)}`)))});
-    ws.on('error',error=>finish(new Error(`阿里云实时接口连接失败：${error.message}`)));
-    ws.on('close',(code,reason)=>{if(!settled)finish(new Error(`阿里云连接已关闭（${code}）：${reason.toString()||'未收到完整合成结果'}`))});
-  });
+async function aliyunHttpTts({apiKey,model,text,audioData,voice,endpoint}){
+  if(!apiKey||!text?.trim()||(!audioData&&!voice))throw new Error('缺少 API Key、合成文本或参考音频/Voice ID');
+  const modelId=model||aliyunHttpModel;
+  if(modelId!==aliyunHttpModel)throw new Error(`当前直连接口固定使用 HTTP 模型 ${aliyunHttpModel}`);
+  const base=aliyunBase(endpoint);
+  const headers={Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'};
+  let voiceId=voice||'';
+  if(audioData){
+    if(!/^data:audio\/(wav|mpeg|mp4);base64,[a-z0-9+/=]+$/i.test(audioData))throw new Error('参考音频数据格式无效，请重新选择 WAV、MP3 或 M4A');
+    const cloneResponse=await fetch(`${base}/services/audio/tts/customization`,{method:'POST',headers,body:JSON.stringify({model:'qwen-voice-enrollment',input:{action:'create',target_model:modelId,preferred_name:`vp${Date.now().toString(36).slice(-10)}`,audio:{data:audioData},language:'zh'}})});
+    const cloneData=await cloneResponse.json().catch(()=>({}));
+    if(!cloneResponse.ok||cloneData.code)throw new Error(`阿里云创建音色失败（${cloneResponse.status}）：${cloneData.message||cloneData.msg||cloneData.code||'请检查模型权限及参考音频'}`);
+    voiceId=cloneData.output?.voice||'';
+    if(!voiceId)throw new Error('阿里云创建音色成功响应中缺少 voice ID');
+  }
+
+  try{
+    const synthesisResponse=await fetch(`${base}/services/aigc/multimodal-generation/generation`,{method:'POST',headers,body:JSON.stringify({model:modelId,input:{text:text.trim(),voice:voiceId,language_type:'Chinese'}})});
+    const synthesisData=await synthesisResponse.json().catch(()=>({}));
+    if(!synthesisResponse.ok||synthesisData.code)throw new Error(`阿里云 HTTP 合成失败（${synthesisResponse.status}${synthesisData.code?` ${synthesisData.code}`:''}）：${synthesisData.message||synthesisData.msg||'请在百炼模型广场开通 '+modelId}`);
+    const resultUrl=synthesisData.output?.audio?.url;
+    if(!resultUrl)throw new Error('阿里云合成响应中缺少音频 URL');
+    let audioUrl;try{audioUrl=new URL(String(resultUrl).replace(/^http:\/\//i,'https://'))}catch{throw new Error('阿里云返回的音频 URL 格式无效')}
+    if(audioUrl.protocol!=='https:'||!audioUrl.hostname.toLowerCase().endsWith('.aliyuncs.com'))throw new Error('阿里云返回了不受支持的音频下载地址');
+    const audioResponse=await fetch(audioUrl);if(!audioResponse.ok)throw new Error(`合成音频下载失败（${audioResponse.status}）`);
+    const buffer=Buffer.from(await audioResponse.arrayBuffer());
+    if(!buffer.length||buffer.length>30*1024*1024)throw new Error('阿里云返回的音频为空或超过 30 MB');
+    return {buffer,voice:voiceId};
+  }catch(error){
+    if(audioData)await fetch(`${base}/services/audio/tts/customization`,{method:'POST',headers,body:JSON.stringify({model:'qwen-voice-enrollment',input:{action:'delete',voice:voiceId}})}).catch(()=>{});
+    throw error;
+  }
 }
 
 async function readJson(req){let body='';for await(const chunk of req){body+=chunk;if(body.length>20*1024*1024)throw new Error('请求体过大')}return JSON.parse(body||'{}')}
 const server=http.createServer(async(req,res)=>{try{
   const pathname=decodeURIComponent((req.url||'/').split('?')[0]);const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
   if(pathname==='/api/milora')return await proxyMilora(url,res);
-  if(pathname==='/api/aliyun/tts'&&req.method==='POST'){
-    const input=await readJson(req);
-    if(!input.apiKey||!input.voice||!input.text?.trim()){
-      res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});
-      return res.end(JSON.stringify({error:'缺少 API Key、voice 或合成文本'}));
-    }
-    const audio=await aliyunRealtimeTts(input);
-    res.writeHead(200,{'Content-Type':'audio/wav','Content-Length':String(audio.length),'Cache-Control':'no-store'});
-    return res.end(audio);
+  if(pathname==='/api/aliyun/tts-http'&&req.method==='POST'){
+    const input=await readJson(req);const result=await aliyunHttpTts(input);
+    res.writeHead(200,{'Content-Type':'audio/wav','Content-Length':String(result.buffer.length),'X-Voice-Id':result.voice,'Cache-Control':'no-store'});
+    return res.end(result.buffer);
   }
   const safe=normalize(pathname==='/'?'/index.html':pathname);const file=join(root,safe);
   if(!file.startsWith(root)){res.writeHead(403);return res.end('Forbidden')}
