@@ -1,14 +1,14 @@
 const PROVIDERS={
   'milora-mambo':{name:'Milora 曼波免费版',endpoint:'https://api.milorapart.top/apis/mbAIsc',model:'曼波免费试用版'},
   'fish-audio':{name:'Fish Audio',endpoint:'https://api.fish.audio/v1/tts',model:'s2.1-pro-free'},
-  'aliyun-qwen-tts':{name:'阿里云 Qwen-TTS',endpoint:'https://dashscope.aliyuncs.com/api/v1',model:'qwen3-tts-vc-realtime-2026-01-15'},
+  'aliyun-qwen-tts':{name:'阿里云 Qwen-TTS',endpoint:'https://dashscope.aliyuncs.com/api/v1',model:'qwen3-tts-vc-realtime-2025-11-27'},
   custom:{name:'自定义接口',endpoint:'',model:''}
 };
-const ALIYUN_MODELS=[{id:'qwen3-tts-vc-realtime-2026-01-15',label:'Qwen3-TTS声音复刻（官方当前版本）'}];
+const ALIYUN_MODELS=[{id:'qwen3-tts-vc-realtime-2025-11-27',label:'Qwen3-TTS声音复刻（官方克隆API示例兼容版）'}];
 const STORAGE='voiceprint-pwa-settings-v1',HISTORY='voiceprint-pwa-history-v1';
 const $=id=>document.getElementById(id);
 const state={settings:loadSettings(),reference:null,referenceUrl:null,recorder:null,chunks:[],generatedBlob:null,generatedUrl:null,generating:false};
-function loadSettings(){const base={activeProvider:'milora-mambo',profiles:{}};try{const saved=JSON.parse(localStorage.getItem(STORAGE)||'{}');base.activeProvider=saved.activeProvider||base.activeProvider;base.profiles=saved.profiles||{};if(base.profiles['aliyun-qwen-tts']?.model==='qwen3-tts-vc-2026-01-22')base.profiles['aliyun-qwen-tts'].model='qwen3-tts-vc-realtime-2026-01-15';return base}catch{return base}}
+function loadSettings(){const base={activeProvider:'milora-mambo',profiles:{}};try{const saved=JSON.parse(localStorage.getItem(STORAGE)||'{}');base.activeProvider=saved.activeProvider||base.activeProvider;base.profiles=saved.profiles||{};if(['qwen3-tts-vc-2026-01-22','qwen3-tts-vc-realtime-2026-01-15'].includes(base.profiles['aliyun-qwen-tts']?.model))base.profiles['aliyun-qwen-tts'].model='qwen3-tts-vc-realtime-2025-11-27';return base}catch{return base}}
 function profile(key=state.settings.activeProvider){return {...PROVIDERS[key],...(state.settings.profiles[key]||{}),provider:key}}
 function saveSettings(){localStorage.setItem(STORAGE,JSON.stringify(state.settings))}
 function toast(message,type=''){const node=document.createElement('div');node.className='toast '+type;node.textContent=message;$('toastRegion').appendChild(node);setTimeout(()=>node.remove(),3600)}
@@ -63,7 +63,7 @@ async function generateAliyun(text,p){
   if(!supported)throw new Error('当前参考音频不是阿里云支持的 MP3、M4A 或 WAV 格式，请改用这三种格式');
   const audio=await fileToAliyunWav(state.reference),root=p.endpoint||PROVIDERS['aliyun-qwen-tts'].endpoint;
   const headers={'Content-Type':'application/json',Authorization:`Bearer ${p.apiKey}`};
-  const model=p.model||'qwen3-tts-vc-realtime-2026-01-15';
+  const model=p.model||'qwen3-tts-vc-realtime-2025-11-27';
   const clone=await fetch(root+'/services/audio/tts/customization',{method:'POST',headers,body:JSON.stringify({model:'qwen-voice-enrollment',input:{action:'create',target_model:model,preferred_name:'voice'+Date.now().toString().slice(-8),audio:{data:audio},language:'zh'}})});
   const cd=await clone.json();const voice=cd.output?.voice||cd.output?.voice_id;
   if(!clone.ok||!voice)throw new Error(`阿里云创建声音失败（${clone.status}）：${cd.message||cd.code||JSON.stringify(cd).slice(0,180)}`);

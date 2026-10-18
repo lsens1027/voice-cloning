@@ -9,7 +9,7 @@ const root=fileURLToPath(new URL('.',import.meta.url));
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/manifest+json; charset=utf-8','.svg':'image/svg+xml'};
 const miloraEndpoint='https://api.milorapart.top/apis/mbAIsc';
 const allowedAudioHosts=new Set(['media.milorapart.top','api.milorapart.top']);
-const aliyunModel='qwen3-tts-vc-realtime-2026-01-15';
+const aliyunModel='qwen3-tts-vc-realtime-2025-11-27';
 
 async function proxyMilora(url,res){
   const text=url.searchParams.get('text')?.trim();
