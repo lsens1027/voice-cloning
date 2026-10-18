@@ -1,14 +1,14 @@
 const PROVIDERS={
   'milora-mambo':{name:'Milora 曼波免费版',endpoint:'https://api.milorapart.top/apis/mbAIsc',model:'曼波免费试用版'},
   'fish-audio':{name:'Fish Audio',endpoint:'https://api.fish.audio/v1/tts',model:'s2.1-pro-free'},
-  'aliyun-qwen-tts':{name:'阿里云 Qwen-TTS',endpoint:'https://dashscope.aliyuncs.com/api/v1',model:'qwen3-tts-vc-2026-01-22'},
+  'aliyun-qwen-tts':{name:'阿里云 Qwen Audio 3.1',endpoint:'https://dashscope.aliyuncs.com/api/v1',model:'qwen-audio-3.1-tts-flash'},
   custom:{name:'自定义接口',endpoint:'',model:''}
 };
-const ALIYUN_MODELS=[{id:'qwen3-tts-vc-2026-01-22',label:'Qwen3-TTS声音复刻（HTTP直连版）'}];
+const ALIYUN_MODELS=[{id:'qwen-audio-3.1-tts-flash',label:'Qwen Audio 3.1 声音复刻（HTTP）'}];
 const STORAGE='voiceprint-pwa-settings-v1',HISTORY='voiceprint-pwa-history-v1';
 const $=id=>document.getElementById(id);
 const state={settings:loadSettings(),reference:null,referenceUrl:null,recorder:null,chunks:[],generatedBlob:null,generatedUrl:null,generating:false};
-function loadSettings(){const base={activeProvider:'milora-mambo',profiles:{}};try{const saved=JSON.parse(localStorage.getItem(STORAGE)||'{}');base.activeProvider=saved.activeProvider||base.activeProvider;base.profiles=saved.profiles||{};const aliyun=base.profiles['aliyun-qwen-tts'];if(aliyun&&aliyun.model!=='qwen3-tts-vc-2026-01-22'){aliyun.model='qwen3-tts-vc-2026-01-22';aliyun.voiceId='';aliyun.voiceReferenceHash='';aliyun.voiceEndpoint=''}return base}catch{return base}}
+function loadSettings(){const base={activeProvider:'milora-mambo',profiles:{}};try{const saved=JSON.parse(localStorage.getItem(STORAGE)||'{}');base.activeProvider=saved.activeProvider||base.activeProvider;base.profiles=saved.profiles||{};const aliyun=base.profiles['aliyun-qwen-tts'];if(aliyun&&aliyun.model!=='qwen-audio-3.1-tts-flash'){aliyun.model='qwen-audio-3.1-tts-flash';aliyun.voiceId='';aliyun.voiceReferenceHash='';aliyun.voiceEndpoint=''}return base}catch{return base}}
 function profile(key=state.settings.activeProvider){return {...PROVIDERS[key],...(state.settings.profiles[key]||{}),provider:key}}
 function saveSettings(){localStorage.setItem(STORAGE,JSON.stringify(state.settings))}
 function toast(message,type=''){const node=document.createElement('div');node.className='toast '+type;node.textContent=message;$('toastRegion').appendChild(node);setTimeout(()=>node.remove(),3600)}
@@ -58,10 +58,11 @@ async function fileToAliyunWav(file){
 async function fingerprintAudio(file){const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('')}
 async function generateAliyun(text,p){
   if(!p.apiKey)throw new Error('阿里云需要 API Key');
-  const root=p.endpoint||PROVIDERS['aliyun-qwen-tts'].endpoint,model=p.model||'qwen3-tts-vc-2026-01-22';let audioData='',referenceHash='';
+  const root=p.endpoint||PROVIDERS['aliyun-qwen-tts'].endpoint,model=p.model||'qwen-audio-3.1-tts-flash';let audioData='',referenceHash='';
   if(state.reference){const mime=(state.reference.type||'').toLowerCase(),name=(state.reference.name||'').toLowerCase();const supported=mime.startsWith('audio/')||/\.(mp3|m4a|wav|webm|ogg)$/.test(name);if(!supported)throw new Error('参考音频必须是 WAV、MP3 或 M4A');referenceHash=await fingerprintAudio(state.reference);const canReuseVoice=p.voiceId&&p.voiceReferenceHash===referenceHash&&p.voiceEndpoint===root;if(!canReuseVoice)audioData=await fileToAliyunWav(state.reference)}
   if(!audioData&&!p.voiceId)throw new Error('请先选择参考音频，或填写已创建的 Qwen-TTS Voice ID');
-  const response=await fetch('/api/aliyun/tts-http',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:p.apiKey,model,voice:audioData?'':p.voiceId,audioData,text,endpoint:root})});
+  const emotion=$('emotionInput').value,instruction=emotion==='自然'?'':`请用${emotion}的情感和语气朗读。`;
+  const response=await fetch('/api/aliyun/tts-http',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:p.apiKey,model,voice:audioData?'':p.voiceId,audioData,text,endpoint:root,rate:Number($('speedInput').value),instruction})});
   if(!response.ok){let message='阿里云 HTTP 语音合成失败';try{message=(await response.json()).error||message}catch{}throw new Error(message)}
   const createdVoice=response.headers.get('X-Voice-Id');if(createdVoice){const key='aliyun-qwen-tts';state.settings.profiles[key]={...profile(key),voiceId:createdVoice,...(audioData?{voiceReferenceHash:referenceHash,voiceEndpoint:root}:{})};saveSettings();$('voiceInput').value=createdVoice}
   return response.blob();
