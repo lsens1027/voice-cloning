@@ -72,8 +72,7 @@ function apiError(stage,response,data){return new Error(`阿里云${stage}失败
 
 async function aliyunHttpTts({apiKey,model,text,audioData,voice,endpoint,rate,instruction,origin}){
   if(!apiKey||!text?.trim()||(!audioData&&!voice))throw new Error('缺少 API Key、合成文本或参考音频/Voice ID');
-  const modelId=model||aliyunHttpModel;
-  if(modelId!==aliyunHttpModel)throw new Error(`当前直连接口固定使用 HTTP 模型 ${aliyunHttpModel}`);
+  const modelId=aliyunHttpModel;
   const base=aliyunBase(endpoint);
   const headers={Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'};
   let voiceId=voice||'';let tempToken='';let createdVoice=false;

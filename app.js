@@ -58,7 +58,7 @@ async function fileToAliyunWav(file){
 async function fingerprintAudio(file){const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('')}
 async function generateAliyun(text,p){
   if(!p.apiKey)throw new Error('阿里云需要 API Key');
-  const root=p.endpoint||PROVIDERS['aliyun-qwen-tts'].endpoint,model=p.model||'qwen-audio-3.1-tts-flash';let audioData='',referenceHash='';
+  const root=p.endpoint||PROVIDERS['aliyun-qwen-tts'].endpoint,model='qwen-audio-3.1-tts-flash';let audioData='',referenceHash='';
   if(state.reference){const mime=(state.reference.type||'').toLowerCase(),name=(state.reference.name||'').toLowerCase();const supported=mime.startsWith('audio/')||/\.(mp3|m4a|wav|webm|ogg)$/.test(name);if(!supported)throw new Error('参考音频必须是 WAV、MP3 或 M4A');referenceHash=await fingerprintAudio(state.reference);const canReuseVoice=p.voiceId&&p.voiceReferenceHash===referenceHash&&p.voiceEndpoint===root;if(!canReuseVoice)audioData=await fileToAliyunWav(state.reference)}
   if(!audioData&&!p.voiceId)throw new Error('请先选择参考音频，或填写已创建的 Qwen-TTS Voice ID');
   const emotion=$('emotionInput').value,instruction=emotion==='自然'?'':`请用${emotion}的情感和语气朗读。`;
