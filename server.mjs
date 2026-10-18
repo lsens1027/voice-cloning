@@ -114,11 +114,56 @@ async function aliyunHttpTts({apiKey,model,text,audioData,voice,endpoint,rate,in
   }
 }
 
+function androidWorkspaceBase(workspaceId){
+  if(!/^[a-z0-9-]{3,80}$/i.test(workspaceId))throw new Error('Android Workspace ID 格式无效');
+  return `https://${workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1`;
+}
+
+function requestApiKey(req){
+  const value=String(req.headers.authorization||'');
+  const match=value.match(/^Bearer\s+(.+)$/i);
+  if(!match)throw new Error('缺少 Bearer API Key');
+  return match[1].trim();
+}
+
+async function proxyAndroidLegacy(pathname,req,res){
+  const createMatch=pathname.match(/^\/api\/v1\/workspace\/([a-z0-9-]+)\/services\/audio\/tts\/customization$/i);
+  const synthMatch=pathname.match(/^\/api\/v1\/workspace\/([a-z0-9-]+)\/services\/aigc\/multimodal-generation\/generation$/i);
+  if(!createMatch&&!synthMatch)return false;
+  if(req.method!=='POST'){res.writeHead(405,{'Allow':'POST','Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({error:'Method Not Allowed'}));return true}
+  try{
+    const workspaceId=(createMatch||synthMatch)[1],base=androidWorkspaceBase(workspaceId),apiKey=requestApiKey(req),headers={Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body=await readJson(req);
+    if(createMatch){
+      const audioData=body.input?.audio?.data,temp=storeTemporaryAudio(audioData,publicOrigin(req));
+      try{
+        const response=await fetchAliyun(`${base}/services/audio/tts/customization`,{method:'POST',headers,body:JSON.stringify({model:'voice-enrollment',input:{action:'create_voice',target_model:aliyunHttpModel,prefix:`vp${Date.now().toString(36).slice(-8)}`,url:temp.url,language_hints:['zh']}})},'Android 创建音色');
+        const data=await responseJson(response);
+        if(!response.ok||data.code){res.writeHead(response.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));return true}
+        const voiceId=data.output?.voice_id||data.output?.voice||'';
+        if(!voiceId)throw new Error('百炼创建音色成功，但没有返回 Voice ID');
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify({output:{voice:voiceId,voice_id:voiceId}}));return true;
+      }finally{temporaryAudio.delete(temp.token)}
+    }
+    const oldInput=body.input||{};
+    if(!oldInput.text?.trim()||!oldInput.voice)throw new Error('缺少合成文本或音色 ID');
+    const input={text:String(oldInput.text).trim(),voice:String(oldInput.voice),format:'wav',sample_rate:24000,rate:1.0};
+    const instruction=oldInput.instructions||oldInput.instruction;if(instruction)input.instruction=String(instruction).slice(0,200);
+    const response=await fetchAliyun(`${base}/services/audio/tts/SpeechSynthesizer`,{method:'POST',headers,body:JSON.stringify({model:aliyunHttpModel,input})},'Android HTTP 合成');
+    const data=await responseJson(response);
+    if(!response.ok||data.code||data.base_resp?.status_code){res.writeHead(response.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));return true}
+    if(!data.output?.audio?.url)throw new Error('百炼 Android 合成响应中缺少音频 URL');
+    res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));return true;
+  }catch(error){
+    res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify({error:error.message||'Android 百炼代理请求失败'}));return true;
+  }
+}
+
 async function readJson(req){let body='';for await(const chunk of req){body+=chunk;if(body.length>20*1024*1024)throw new Error('请求体过大，请使用 15 MB 以内的参考音频')}return JSON.parse(body||'{}')}
 const server=http.createServer(async(req,res)=>{try{
   const pathname=decodeURIComponent((req.url||'/').split('?')[0]);const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
   if(pathname==='/api/milora')return await proxyMilora(url,res);
   if(pathname.startsWith('/api/temporary-audio/')){if(!serveTemporaryAudio(pathname,req,res)){res.writeHead(404,{'Cache-Control':'no-store'});res.end('Not Found')}return}
+  if(pathname.startsWith('/api/v1/workspace/')&&await proxyAndroidLegacy(pathname,req,res))return;
   if(pathname==='/api/aliyun/tts-http'&&req.method==='POST'){
     const input=await readJson(req);if(input.audioData)input.origin=publicOrigin(req);const result=await aliyunHttpTts(input);
     res.writeHead(200,{'Content-Type':'audio/wav','Content-Length':String(result.buffer.length),...(result.voice?{'X-Voice-Id':result.voice}:{}),'Cache-Control':'no-store'});
