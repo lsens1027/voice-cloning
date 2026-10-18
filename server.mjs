@@ -42,6 +42,11 @@ async function aliyunHttpTts({apiKey,model,text,audioData,voice,endpoint}){
   let voiceId=voice||'';
   if(audioData){
     if(!/^data:audio\/(wav|mpeg|mp4);base64,[a-z0-9+/=]+$/i.test(audioData))throw new Error('参考音频数据格式无效，请重新选择 WAV、MP3 或 M4A');
+    const probe=await fetch(`${base}/services/aigc/multimodal-generation/generation`,{method:'POST',headers,body:JSON.stringify({model:modelId,input:{text:'测试',voice:'voiceprint_preflight_unknown',language_type:'Chinese'}})});
+    const probeData=await probe.json().catch(()=>({}));
+    const probeMessage=String(probeData.message||probeData.msg||'');
+    if(/model\s+not\s+(exist|found)/i.test(probeMessage))throw new Error(`百炼当前 Workspace 无法调用 ${modelId}（Model not exist）；请先在北京地域对应业务空间开通该模型。未创建参考音色。`);
+    if([401,403,429].includes(probe.status)||probe.status>=500)throw new Error(`阿里云 HTTP 模型预检失败（${probe.status}${probeData.code?` ${probeData.code}`:''}）：${probeMessage||'请检查 API Key、Endpoint 和模型权限'}`);
     const cloneResponse=await fetch(`${base}/services/audio/tts/customization`,{method:'POST',headers,body:JSON.stringify({model:'qwen-voice-enrollment',input:{action:'create',target_model:modelId,preferred_name:`vp${Date.now().toString(36).slice(-10)}`,audio:{data:audioData},language:'zh'}})});
     const cloneData=await cloneResponse.json().catch(()=>({}));
     if(!cloneResponse.ok||cloneData.code)throw new Error(`阿里云创建音色失败（${cloneResponse.status}）：${cloneData.message||cloneData.msg||cloneData.code||'请检查模型权限及参考音频'}`);
