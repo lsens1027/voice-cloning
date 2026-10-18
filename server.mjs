@@ -34,7 +34,7 @@ function wavFromPcm(pcm,sampleRate=24000){
 function aliyunRealtimeTts({apiKey,model,voice,text,endpoint}){
   return new Promise((resolve,reject)=>{
     const modelId=model||aliyunModel;
-    if(modelId!==aliyunModel)return reject(new Error(`当前克隆音色仅兼容模型 ${aliyunModel}，请使用该模型重新克隆`));
+    if(!/^qwen[0-9a-z.-]+$/i.test(modelId))return reject(new Error('模型 ID 格式无效，请填写百炼支持的 Qwen TTS Realtime 模型 ID'));
     let host='dashscope.aliyuncs.com';
     try{const u=new URL(endpoint||'https://dashscope.aliyuncs.com/api/v1');if(u.hostname==='dashscope-intl.aliyuncs.com')host='dashscope-intl.aliyuncs.com'}catch{}
     const ws=new WebSocket(`wss://${host}/api-ws/v1/realtime?model=${encodeURIComponent(modelId)}`,{headers:{Authorization:`Bearer ${apiKey}`}});
